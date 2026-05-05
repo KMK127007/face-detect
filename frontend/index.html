@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>FaceTrack — Live Detection Feed</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg:        #0a0c0f;
+    --panel:     #111417;
+    --border:    #1e2530;
+    --accent:    #00ff50;
+    --accent2:   #00bfff;
+    --warn:      #ff4444;
+    --text:      #c8d0da;
+    --dim:       #4a5568;
+    --mono:      'Share Tech Mono', monospace;
+    --sans:      'Barlow Condensed', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: 52px 1fr;
+  }
+
+  /* ── header ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    position: relative;
+  }
+  header .logo {
+    font-family: var(--mono);
+    font-size: 18px;
+    color: var(--accent);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  header .logo span { color: var(--dim); }
+  .badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .badge-live { color: var(--accent); border-color: var(--accent); animation: blink 1.4s step-end infinite; }
+  .badge-idle { color: var(--dim); border-color: var(--dim); }
+  @keyframes blink { 50% { opacity: 0.2; } }
+
+  .spacer { flex: 1; }
+  .header-time {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  /* ── layout ── */
+  main {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    height: calc(100vh - 52px);
+    overflow: hidden;
+  }
+
+  /* ── video panel ── */
+  .video-panel {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .video-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+
+  .video-wrap {
+    position: relative;
+    flex: 1;
+    background: #000;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .video-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-linear-gradient(0deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px),
+      repeating-linear-gradient(90deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px);
+    opacity: 0.25;
+    pointer-events: none;
+  }
+
+  #stream-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    position: relative;
+    z-index: 1;
+    display: none;
+  }
+  .no-feed {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--dim);
+    text-align: center;
+    line-height: 1.8;
+    z-index: 1;
+  }
+  .no-feed strong { display: block; font-size: 22px; color: var(--border); margin-bottom: 6px; }
+
+  /* scan-line effect on stream */
+  .scanline {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  /* ── controls ── */
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  input[type=text] {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    outline: none;
+    flex: 1;
+    min-width: 180px;
+    transition: border-color 0.2s;
+  }
+  input[type=text]:focus { border-color: var(--accent); }
+  input[type=text]::placeholder { color: var(--dim); }
+
+  button {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 7px 18px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-start {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: transparent;
+  }
+  .btn-start:hover, .btn-start.active {
+    background: var(--accent);
+    color: #000;
+  }
+  .btn-stop {
+    border-color: var(--warn);
+    color: var(--warn);
+    background: transparent;
+  }
+  .btn-stop:hover { background: var(--warn); color: #fff; }
+  .btn-stop:disabled { opacity: 0.3; cursor: default; }
+
+  /* ── sidebar ── */
+  .sidebar {
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  /* ROI card */
+  .roi-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .roi-val {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+  }
+  .roi-val label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .roi-val span {
+    font-family: var(--mono);
+    font-size: 16px;
+    color: var(--accent);
+  }
+  .roi-val.full { grid-column: 1/-1; }
+
+  .conf-bar-wrap {
+    height: 4px;
+    background: var(--border);
+    margin-top: 6px;
+  }
+  .conf-bar {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s;
+    width: 0%;
+  }
+
+  /* Status indicators */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--dim);
+    flex-shrink: 0;
+  }
+  .dot.green  { background: var(--accent);  box-shadow: 0 0 6px var(--accent); }
+  .dot.red    { background: var(--warn);    box-shadow: 0 0 6px var(--warn); }
+  .dot.blue   { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
+
+  .stat-label { font-size: 13px; color: var(--dim); }
+  .stat-val   { font-family: var(--mono); font-size: 13px; margin-left: auto; }
+
+  /* Log */
+  .log-wrap {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .log-entry {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.5;
+    animation: fadein 0.3s ease;
+  }
+  .log-entry .ts { color: #2a3340; margin-right: 6px; }
+  .log-entry.ok   .msg { color: var(--accent); }
+  .log-entry.info .msg { color: var(--accent2); }
+  .log-entry.err  .msg { color: var(--warn); }
+
+  @keyframes fadein { from { opacity: 0; transform: translateY(4px); } }
+
+  /* camera feed selector */
+  select {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 8px;
+    outline: none;
+    flex: 1;
+  }
+
+  /* mini ROI visualiser */
+  .roi-canvas-wrap {
+    border: 1px solid var(--border);
+    background: #000;
+    width: 100%;
+    aspect-ratio: 4/3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  #roi-canvas { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">Face<span>//</span>Track</span>
+  <span id="live-badge" class="badge badge-idle">IDLE</span>
+  <div class="spacer"></div>
+  <span id="clock" class="header-time">00:00:00</span>
+</header>
+
+<main>
+  <!-- ── video panel ── -->
+  <div class="video-panel">
+    <span class="video-label">// annotated stream</span>
+
+    <div class="video-wrap" id="video-wrap">
+      <div class="scanline"></div>
+      <img id="stream-img" alt="Annotated stream"/>
+      <div class="no-feed" id="no-feed">
+        <strong>[ NO FEED ]</strong>
+        configure session below and press START
+      </div>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="session-input" placeholder="session-id (e.g. live-01)" value="live-01"/>
+      <select id="camera-select">
+        <option value="0">Camera 0 (default)</option>
+        <option value="1">Camera 1</option>
+      </select>
+      <button class="btn-start" id="btn-start" onclick="startSession()">▶ Start</button>
+      <button class="btn-stop" id="btn-stop" onclick="stopSession()" disabled>■ Stop</button>
+    </div>
+  </div>
+
+  <!-- ── sidebar ── -->
+  <div class="sidebar">
+
+    <!-- Status -->
+    <div class="section">
+      <div class="section-title">// system status</div>
+      <div class="status-row">
+        <div class="dot" id="dot-api"></div>
+        <span class="stat-label">API</span>
+        <span class="stat-val" id="stat-api">—</span>
+      </div>
+      <div class="status-row">
+        <div class="dot" id="dot-cam"></div>
+        <span class="stat-label">Camera</span>
+        <span class="stat-val" id="stat-cam">—</span>
+      </div>
+      <div class="status-row">
+        <div class="dot" id="dot-det"></div>
+        <span class="stat-label">Detection</span>
+        <span class="stat-val" id="stat-det">—</span>
+      </div>
+      <div class="status-row">
+        <div class="dot" id="dot-fps"></div>
+        <span class="stat-label">FPS</span>
+        <span class="stat-val" id="stat-fps">—</span>
+      </div>
+    </div>
+
+    <!-- ROI -->
+    <div class="section">
+      <div class="section-title">// latest roi</div>
+      <div class="roi-grid">
+        <div class="roi-val">
+          <label>X</label><span id="roi-x">—</span>
+        </div>
+        <div class="roi-val">
+          <label>Y</label><span id="roi-y">—</span>
+        </div>
+        <div class="roi-val">
+          <label>W</label><span id="roi-w">—</span>
+        </div>
+        <div class="roi-val">
+          <label>H</label><span id="roi-h">—</span>
+        </div>
+        <div class="roi-val full">
+          <label>Confidence</label>
+          <span id="roi-conf">—</span>
+          <div class="conf-bar-wrap"><div class="conf-bar" id="conf-bar"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mini ROI visualiser -->
+    <div class="section">
+      <div class="section-title">// roi map</div>
+      <div class="roi-canvas-wrap">
+        <canvas id="roi-canvas" width="288" height="216"></canvas>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="section-title" style="padding:12px 16px 0;">// event log</div>
+    <div class="log-wrap" id="log"></div>
+  </div>
+</main>
+
+<script>
+const API = '';   // same origin via nginx proxy
+
+let sessionId = 'live-01';
+let running = false;
+let mediaStream = null;
+let sendInterval = null;
+let roiInterval = null;
+let frameCount = 0;
+let fpsTimer = null;
+let lastFps = 0;
+
+// ── Clock ──
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toTimeString().slice(0,8);
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Logging ──
+function log(msg, type='info') {
+  const wrap = document.getElementById('log');
+  const ts = new Date().toTimeString().slice(0,8);
+  const div = document.createElement('div');
+  div.className = `log-entry ${type}`;
+  div.innerHTML = `<span class="ts">${ts}</span><span class="msg">${msg}</span>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+  if (wrap.children.length > 120) wrap.removeChild(wrap.firstChild);
+}
+
+// ── API health check ──
+async function checkApi() {
+  try {
+    const r = await fetch(`${API}/health`);
+    if (r.ok) {
+      setDot('api', 'green'); setVal('api', 'OK');
+    } else {
+      setDot('api', 'red'); setVal('api', r.status);
+    }
+  } catch {
+    setDot('api', 'red'); setVal('api', 'DOWN');
+  }
+}
+setInterval(checkApi, 5000);
+checkApi();
+
+function setDot(id, cls) {
+  const el = document.getElementById(`dot-${id}`);
+  el.className = `dot ${cls}`;
+}
+function setVal(id, v) {
+  document.getElementById(`stat-${id}`).textContent = v;
+}
+
+// ── Session control ──
+async function startSession() {
+  sessionId = document.getElementById('session-input').value.trim() || 'live-01';
+  const cameraIdx = parseInt(document.getElementById('camera-select').value);
+
+  // Get webcam
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: cameraIdx ? { exact: String(cameraIdx) } : undefined, width: 640, height: 480 }
+    });
+    setDot('cam', 'green'); setVal('cam', 'ACTIVE');
+    log(`Camera acquired`, 'ok');
+  } catch(e) {
+    log(`Camera error: ${e.message}`, 'err');
+    setDot('cam', 'red'); setVal('cam', 'ERROR');
+    return;
+  }
+
+  // Register session
+  try {
+    await fetch(`${API}/api/feed/start/${sessionId}`, { method: 'POST' });
+    log(`Session "${sessionId}" started`, 'ok');
+  } catch(e) {
+    log(`Session start failed: ${e.message}`, 'err');
+  }
+
+  // Connect stream
+  const img = document.getElementById('stream-img');
+  img.src = `${API}/api/stream/${sessionId}`;
+  img.style.display = 'block';
+  document.getElementById('no-feed').style.display = 'none';
+  document.getElementById('live-badge').className = 'badge badge-live';
+  document.getElementById('live-badge').textContent = 'LIVE';
+
+  // Begin sending frames
+  const video = document.createElement('video');
+  video.srcObject = mediaStream;
+  video.play();
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 640; canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+
+  running = true;
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+
+  setDot('fps', 'blue');
+
+  // FPS counter
+  fpsTimer = setInterval(() => {
+    setVal('fps', frameCount + ' fps');
+    lastFps = frameCount;
+    frameCount = 0;
+  }, 1000);
+
+  // Frame sender
+  sendInterval = setInterval(async () => {
+    if (!running) return;
+    ctx.drawImage(video, 0, 0, 640, 480);
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      try {
+        const r = await fetch(`${API}/api/feed/${sessionId}`, {
+          method: 'POST',
+          body: blob,
+          headers: { 'Content-Type': 'image/jpeg' }
+        });
+        if (r.ok) {
+          const data = await r.json();
+          frameCount++;
+          if (data.face_detected && data.roi) {
+            updateROI(data.roi);
+            setDot('det', 'green'); setVal('det', 'FACE');
+          } else {
+            setDot('det', 'red'); setVal('det', 'NONE');
+          }
+        }
+      } catch(e) {
+        // silent - stream may have blips
+      }
+    }, 'image/jpeg', 0.8);
+  }, 100); // 10fps
+
+  // ROI poller
+  roiInterval = setInterval(pollROI, 1000);
+}
+
+async function stopSession() {
+  running = false;
+  clearInterval(sendInterval);
+  clearInterval(roiInterval);
+  clearInterval(fpsTimer);
+
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+
+  try {
+    await fetch(`${API}/api/feed/stop/${sessionId}`, { method: 'POST' });
+    log(`Session "${sessionId}" stopped`, 'info');
+  } catch {}
+
+  document.getElementById('stream-img').style.display = 'none';
+  document.getElementById('no-feed').style.display = '';
+  document.getElementById('live-badge').className = 'badge badge-idle';
+  document.getElementById('live-badge').textContent = 'IDLE';
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+
+  setDot('cam', ''); setVal('cam', '—');
+  setDot('det', ''); setVal('det', '—');
+  setDot('fps', ''); setVal('fps', '—');
+}
+
+// ── ROI ──
+function updateROI(roi) {
+  document.getElementById('roi-x').textContent = roi.x;
+  document.getElementById('roi-y').textContent = roi.y;
+  document.getElementById('roi-w').textContent = roi.width;
+  document.getElementById('roi-h').textContent = roi.height;
+  if (roi.confidence !== undefined) {
+    const pct = Math.round(roi.confidence * 100);
+    document.getElementById('roi-conf').textContent = pct + '%';
+    document.getElementById('conf-bar').style.width = pct + '%';
+  }
+  drawROIMap(roi);
+}
+
+function drawROIMap(roi) {
+  const canvas = document.getElementById('roi-canvas');
+  const ctx = canvas.getContext('2d');
+  const cw = canvas.width, ch = canvas.height;
+
+  // Assume source 640x480
+  const scaleX = cw / 640, scaleY = ch / 480;
+  ctx.clearRect(0, 0, cw, ch);
+
+  // Grid
+  ctx.strokeStyle = '#1e2530';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < cw; x += 32) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke(); }
+  for (let y = 0; y < ch; y += 32) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke(); }
+
+  // ROI box
+  const rx = roi.x * scaleX, ry = roi.y * scaleY;
+  const rw = roi.width * scaleX, rh = roi.height * scaleY;
+
+  ctx.fillStyle = 'rgba(0,255,80,0.08)';
+  ctx.fillRect(rx, ry, rw, rh);
+
+  ctx.strokeStyle = '#00ff50';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(rx, ry, rw, rh);
+
+  // Corner marks
+  const cs = 10;
+  ctx.strokeStyle = '#00ff50';
+  ctx.lineWidth = 2;
+  [[rx,ry],[rx+rw,ry],[rx,ry+rh],[rx+rw,ry+rh]].forEach(([cx, cy]) => {
+    ctx.beginPath();
+    ctx.moveTo(cx - cs, cy); ctx.lineTo(cx + cs, cy);
+    ctx.moveTo(cx, cy - cs); ctx.lineTo(cx, cy + cs);
+    ctx.stroke();
+  });
+
+  // Centre dot
+  ctx.fillStyle = '#00ff50';
+  ctx.beginPath();
+  ctx.arc(rx + rw/2, ry + rh/2, 3, 0, Math.PI*2);
+  ctx.fill();
+}
+
+async function pollROI() {
+  try {
+    const r = await fetch(`${API}/api/roi/${sessionId}`);
+    if (r.ok) {
+      const data = await r.json();
+      if (data.roi) updateROI({...data.roi, confidence: data.confidence});
+    }
+  } catch {}
+}
+</script>
+</body>
+</html>
